@@ -2,84 +2,112 @@
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Peer Chat</title>
+  <title>Offline WebRTC Chat</title>
   <style>
-    textarea, input { width: 100%; margin: 5px 0; }
-    #chat { height: 200px; overflow-y: scroll; border: 1px solid #ccc; padding: 5px; }
+    body { font-family: sans-serif; padding: 1em; }
+    textarea, input, button { width: 100%; margin: 0.5em 0; padding: 0.5em; }
+    #chat { height: 200px; overflow-y: scroll; border: 1px solid #ccc; padding: 0.5em; margin-bottom: 1em; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
-  <h2>Peer Chat (WebRTC)</h2>
+  <h2>📡 Offline WebRTC Chat</h2>
 
-  <div id="chat"></div>
-  <input id="message" placeholder="Type message..." />
-  <button onclick="send()">Send</button>
+  <button onclick="startAsOfferer()">Start as Offerer</button>
+  <button onclick="startAsAnswerer()">Start as Answerer</button>
 
-  <h3>Step 1: Create offer</h3>
-  <button onclick="createOffer()">Create Offer</button>
-  <textarea id="offer" rows="5" placeholder="Offer"></textarea>
+  <div id="offerer-section" class="hidden">
+    <h3>Step 1: Send Offer</h3>
+    <textarea id="local-offer" readonly></textarea>
+    <h3>Step 2: Paste Answer</h3>
+    <textarea id="remote-answer"></textarea>
+    <button onclick="acceptAnswer()">Connect</button>
+  </div>
 
-  <h3>Step 2: Paste answer</h3>
-  <textarea id="answer" rows="5" placeholder="Paste Answer Here"></textarea>
-  <button onclick="receiveAnswer()">Receive Answer</button>
+  <div id="answerer-section" class="hidden">
+    <h3>Step 1: Paste Offer</h3>
+    <textarea id="remote-offer"></textarea>
+    <button onclick="generateAnswer()">Generate Answer</button>
+    <h3>Step 2: Send This Back</h3>
+    <textarea id="local-answer" readonly></textarea>
+  </div>
+
+  <div id="chat-section" class="hidden">
+    <div id="chat"></div>
+    <input id="msg" placeholder="Type message..." />
+    <button onclick="send()">Send</button>
+  </div>
 
   <script>
-    let pc = new RTCPeerConnection();
-    let dc = pc.createDataChannel("chat");
+    let pc, dc;
 
-    dc.onmessage = e => {
-      let chat = document.getElementById("chat");
-      chat.innerHTML += `<div><b>Peer:</b> ${e.data}</div>`;
+    function log(msg) {
+      const chat = document.getElementById("chat");
+      chat.innerHTML += `<div>${msg}</div>`;
       chat.scrollTop = chat.scrollHeight;
-    };
-
-    function send() {
-      let input = document.getElementById("message");
-      dc.send(input.value);
-      let chat = document.getElementById("chat");
-      chat.innerHTML += `<div><b>You:</b> ${input.value}</div>`;
-      input.value = '';
     }
 
-    pc.onicecandidate = e => {
-      if (e.candidate === null) {
-        document.getElementById("offer").value = JSON.stringify(pc.localDescription);
-      }
-    };
-
-    function createOffer() {
-      pc.createOffer().then(offer => pc.setLocalDescription(offer));
+    function show(id) {
+      document.getElementById("offerer-section").classList.add("hidden");
+      document.getElementById("answerer-section").classList.add("hidden");
+      document.getElementById("chat-section").classList.add("hidden");
+      document.getElementById(id).classList.remove("hidden");
     }
 
-    function receiveAnswer() {
-      let answer = document.getElementById("answer").value;
+    function startAsOfferer() {
+      show("offerer-section");
+      pc = new RTCPeerConnection();
+      dc = pc.createDataChannel("chat");
+
+      dc.onopen = () => show("chat-section");
+      dc.onmessage = e => log(`<b>Peer:</b> ${e.data}`);
+
+      pc.onicecandidate = e => {
+        if (e.candidate === null) {
+          document.getElementById("local-offer").value = JSON.stringify(pc.localDescription);
+        }
+      };
+
+      pc.createOffer().then(d => pc.setLocalDescription(d));
+    }
+
+    function acceptAnswer() {
+      const answer = document.getElementById("remote-answer").value;
       pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(answer)));
     }
 
-    // For peer who receives the offer:
-    async function receiveOffer(offer) {
+    function startAsAnswerer() {
+      show("answerer-section");
       pc = new RTCPeerConnection();
+
       pc.ondatachannel = e => {
         dc = e.channel;
-        dc.onmessage = e => {
-          let chat = document.getElementById("chat");
-          chat.innerHTML += `<div><b>Peer:</b> ${e.data}</div>`;
-        };
+        dc.onopen = () => show("chat-section");
+        dc.onmessage = e => log(`<b>Peer:</b> ${e.data}`);
       };
-      await pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(offer)));
-      let answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      document.getElementById("answer").value = JSON.stringify(pc.localDescription);
     }
 
-    // Expose receiveOffer in global scope
-    window.receiveOffer = receiveOffer;
+    function generateAnswer() {
+      const offer = document.getElementById("remote-offer").value;
+      pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(offer)))
+        .then(() => pc.createAnswer())
+        .then(answer => pc.setLocalDescription(answer))
+        .then(() => {
+          const localAnswer = document.getElementById("local-answer");
+          pc.onicecandidate = e => {
+            if (e.candidate === null) {
+              localAnswer.value = JSON.stringify(pc.localDescription);
+            }
+          };
+        });
+    }
+
+    function send() {
+      const input = document.getElementById("msg");
+      dc.send(input.value);
+      log(`<b>You:</b> ${input.value}`);
+      input.value = '';
+    }
   </script>
-
-  <h3>ALT: Paste offer if you are the receiver</h3>
-  <textarea id="remote-offer" rows="5" placeholder="Paste Offer Here"></textarea>
-  <button onclick="window.receiveOffer(document.getElementById('remote-offer').value)">Receive Offer</button>
-
 </body>
 </html>
