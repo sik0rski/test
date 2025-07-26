@@ -1,113 +1,285 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Offline WebRTC Chat</title>
-  <style>
-    body { font-family: sans-serif; padding: 1em; }
-    textarea, input, button { width: 100%; margin: 0.5em 0; padding: 0.5em; }
-    #chat { height: 200px; overflow-y: scroll; border: 1px solid #ccc; padding: 0.5em; margin-bottom: 1em; }
-    .hidden { display: none; }
-  </style>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>F / S WebRTC Robot</title>
+<style>
+  body {
+    background: #121212;
+    color: #eee;
+    font-family: monospace;
+    padding: 20px;
+  }
+  h2, h3 {
+    text-align: center;
+  }
+  button {
+    margin: 6px 4px;
+    padding: 10px 18px;
+    border: none;
+    border-radius: 6px;
+    background: #3498db;
+    color: white;
+    cursor: pointer;
+    font-size: 16px;
+  }
+  button:hover {
+    background: #5dade2;
+  }
+  textarea {
+    width: 100%;
+    background: #222;
+    color: #0f0;
+    border: 1px solid #444;
+    border-radius: 6px;
+    padding: 8px;
+    font-family: monospace;
+    font-size: 14px;
+    margin-top: 6px;
+    box-sizing: border-box;
+  }
+  .hidden { display: none; }
+  .log, .stats {
+    background: #222;
+    padding: 12px;
+    border-radius: 6px;
+    margin-top: 12px;
+    white-space: pre-wrap;
+    max-height: 160px;
+    overflow-y: auto;
+  }
+  #statsS div {
+    margin-bottom: 6px;
+    font-weight: bold;
+  }
+  #roleSelect {
+    text-align: center;
+    margin-bottom: 20px;
+  }
+</style>
 </head>
 <body>
-  <h2>📡 Offline WebRTC Chat</h2>
 
-  <button onclick="startAsOfferer()">Start as Offerer</button>
-  <button onclick="startAsAnswerer()">Start as Answerer</button>
+<h2>F / S WebRTC Robot Control</h2>
 
-  <div id="offerer-section" class="hidden">
-    <h3>Step 1: Send Offer</h3>
-    <textarea id="local-offer" readonly></textarea>
-    <h3>Step 2: Paste Answer</h3>
-    <textarea id="remote-answer"></textarea>
-    <button onclick="acceptAnswer()">Connect</button>
+<div id="roleSelect">
+  <button onclick="setRole('F')">Father (F) - Controller</button>
+  <button onclick="setRole('S')">Son (S) - Robot</button>
+</div>
+
+<div id="signalSection" class="hidden">
+  <h3>Signaling (Manual Copy-Paste)</h3>
+
+  <div id="offererUI" class="hidden">
+    <button onclick="createOffer()">Create Offer (F only)</button>
+    <textarea id="offerOut" placeholder="Offer SDP will appear here..." readonly></textarea>
+
+    <textarea id="answerIn" placeholder="Paste Answer SDP here..." ></textarea>
+    <button onclick="setAnswer()">Set Answer (F only)</button>
   </div>
 
-  <div id="answerer-section" class="hidden">
-    <h3>Step 1: Paste Offer</h3>
-    <textarea id="remote-offer"></textarea>
-    <button onclick="generateAnswer()">Generate Answer</button>
-    <h3>Step 2: Send This Back</h3>
-    <textarea id="local-answer" readonly></textarea>
+  <div id="answererUI" class="hidden">
+    <textarea id="offerIn" placeholder="Paste Offer SDP here..."></textarea>
+    <button onclick="receiveOffer()">Receive Offer & Create Answer (S only)</button>
+
+    <textarea id="answerOut" placeholder="Answer SDP will appear here..." readonly></textarea>
   </div>
+</div>
 
-  <div id="chat-section" class="hidden">
-    <div id="chat"></div>
-    <input id="msg" placeholder="Type message..." />
-    <button onclick="send()">Send</button>
+<!-- Father Controls -->
+<div id="fatherPanel" class="hidden">
+  <h3>F Controls</h3>
+  <button onclick="sendCmd('FWD')">Forward</button>
+  <button onclick="sendCmd('BACK')">Backward</button>
+  <button onclick="sendCmd('LEFT')">Left</button>
+  <button onclick="sendCmd('RIGHT')">Right</button>
+  <button onclick="sendCmd('STOP')">Stop</button>
+  <button onclick="sendCmd('LIGHT_ON')">Light On</button>
+  <button onclick="sendCmd('LIGHT_OFF')">Light Off</button>
+  <button onclick="sendCmd('STATUS')">Get Status</button>
+  <button onclick="sendCmd('DANCE')">Dance</button>
+
+  <div class="log" id="logF">Logs:</div>
+</div>
+
+<!-- Son Logs & Stats -->
+<div id="sonPanel" class="hidden">
+  <h3>S Robot Status</h3>
+  <div class="log" id="logS">Logs:</div>
+  <div class="stats" id="statsS">
+    <div>Battery: <span id="batteryLevel">100%</span></div>
+    <div>Uptime: <span id="uptime">0s</span></div>
   </div>
+</div>
 
-  <script>
-    let pc, dc;
+<script>
+let role = null;
+let pc = null;
+let dc = null;
 
-    function log(msg) {
-      const chat = document.getElementById("chat");
-      chat.innerHTML += `<div>${msg}</div>`;
-      chat.scrollTop = chat.scrollHeight;
+let battery = 100;
+let uptime = 0;
+let batteryTimer = null;
+let uptimeTimer = null;
+
+const logF = msg => {
+  const el = document.getElementById('logF');
+  el.textContent += '\n' + msg;
+  el.scrollTop = el.scrollHeight;
+};
+const logS = msg => {
+  const el = document.getElementById('logS');
+  el.textContent += '\n' + msg;
+  el.scrollTop = el.scrollHeight;
+};
+
+function setRole(r) {
+  role = r;
+  document.getElementById('roleSelect').classList.add('hidden');
+  document.getElementById('signalSection').classList.remove('hidden');
+
+  if (role === 'F') {
+    document.getElementById('offererUI').classList.remove('hidden');
+    document.getElementById('answererUI').classList.add('hidden');
+  } else {
+    document.getElementById('offererUI').classList.add('hidden');
+    document.getElementById('answererUI').classList.remove('hidden');
+  }
+
+  initPeer();
+}
+
+function initPeer() {
+  pc = new RTCPeerConnection();
+
+  pc.onicecandidate = e => {
+    if (e.candidate === null) {
+      if (role === 'F') {
+        document.getElementById('offerOut').value = JSON.stringify(pc.localDescription);
+      } else {
+        document.getElementById('answerOut').value = JSON.stringify(pc.localDescription);
+      }
     }
+  };
 
-    function show(id) {
-      document.getElementById("offerer-section").classList.add("hidden");
-      document.getElementById("answerer-section").classList.add("hidden");
-      document.getElementById("chat-section").classList.add("hidden");
-      document.getElementById(id).classList.remove("hidden");
-    }
+  if (role === 'F') {
+    dc = pc.createDataChannel("commands");
 
-    function startAsOfferer() {
-      show("offerer-section");
-      pc = new RTCPeerConnection();
-      dc = pc.createDataChannel("chat");
+    dc.onopen = () => {
+      document.getElementById('fatherPanel').classList.remove('hidden');
+      logF("Connected to Son");
+    };
+    dc.onmessage = e => {
+      logF("Son: " + e.data);
+    };
 
-      dc.onopen = () => show("chat-section");
-      dc.onmessage = e => log(`<b>Peer:</b> ${e.data}`);
+  } else {
+    pc.ondatachannel = e => {
+      dc = e.channel;
 
-      pc.onicecandidate = e => {
-        if (e.candidate === null) {
-          document.getElementById("local-offer").value = JSON.stringify(pc.localDescription);
-        }
+      dc.onopen = () => {
+        document.getElementById('sonPanel').classList.remove('hidden');
+        logS("Connected to Father");
+        startStats();
       };
 
-      pc.createOffer().then(d => pc.setLocalDescription(d));
-    }
-
-    function acceptAnswer() {
-      const answer = document.getElementById("remote-answer").value;
-      pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(answer)));
-    }
-
-    function startAsAnswerer() {
-      show("answerer-section");
-      pc = new RTCPeerConnection();
-
-      pc.ondatachannel = e => {
-        dc = e.channel;
-        dc.onopen = () => show("chat-section");
-        dc.onmessage = e => log(`<b>Peer:</b> ${e.data}`);
+      dc.onmessage = e => {
+        const cmd = e.data;
+        logS("Father: " + cmd);
+        handleCmd(cmd);
       };
-    }
+    };
+  }
+}
 
-    function generateAnswer() {
-      const offer = document.getElementById("remote-offer").value;
-      pc.setRemoteDescription(new RTCSessionDescription(JSON.parse(offer)))
-        .then(() => pc.createAnswer())
-        .then(answer => pc.setLocalDescription(answer))
-        .then(() => {
-          const localAnswer = document.getElementById("local-answer");
-          pc.onicecandidate = e => {
-            if (e.candidate === null) {
-              localAnswer.value = JSON.stringify(pc.localDescription);
-            }
-          };
-        });
-    }
+// Father sends commands to Son
+function sendCmd(cmd) {
+  if (dc && dc.readyState === "open") {
+    dc.send(cmd);
+    logF("Sent: " + cmd);
+  } else {
+    logF("Data channel not open");
+  }
+}
 
-    function send() {
-      const input = document.getElementById("msg");
-      dc.send(input.value);
-      log(`<b>You:</b> ${input.value}`);
-      input.value = '';
-    }
-  </script>
+// Son handles commands and responds
+function handleCmd(cmd) {
+  switch(cmd) {
+    case "LIGHT_ON":
+      dc.send("Light turned ON 💡");
+      break;
+    case "LIGHT_OFF":
+      dc.send("Light turned OFF 🕯️");
+      break;
+    case "STATUS":
+      dc.send(`Battery: ${battery}%, Uptime: ${uptime}s`);
+      break;
+    case "DANCE":
+      dc.send("Son is dancing 🤖🕺");
+      break;
+    default:
+      dc.send(`Executed command: ${cmd}`);
+  }
+}
+
+// Simulate battery drain and uptime on Son side
+function startStats() {
+  battery = 100;
+  uptime = 0;
+  updateStats();
+
+  if (batteryTimer) clearInterval(batteryTimer);
+  if (uptimeTimer) clearInterval(uptimeTimer);
+
+  batteryTimer = setInterval(() => {
+    if(battery > 0) battery--;
+    updateStats();
+  }, 5000);
+
+  uptimeTimer = setInterval(() => {
+    uptime++;
+    updateStats();
+  }, 1000);
+}
+
+function updateStats() {
+  document.getElementById('batteryLevel').textContent = battery + "%";
+  document.getElementById('uptime').textContent = uptime + "s";
+}
+
+// === WebRTC signaling functions ===
+
+async function createOffer() {
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+}
+
+async function setAnswer() {
+  try {
+    const answerStr = document.getElementById('answerIn').value;
+    if (!answerStr) return alert("Paste answer SDP first.");
+    const answer = JSON.parse(answerStr);
+    await pc.setRemoteDescription(answer);
+  } catch (e) {
+    alert("Invalid answer SDP.");
+  }
+}
+
+async function receiveOffer() {
+  try {
+    const offerStr = document.getElementById('offerIn').value;
+    if (!offerStr) return alert("Paste offer SDP first.");
+    const offer = JSON.parse(offerStr);
+    await pc.setRemoteDescription(offer);
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+  } catch (e) {
+    alert("Invalid offer SDP.");
+  }
+}
+</script>
+
 </body>
 </html>
