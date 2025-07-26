@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>F / S WebRTC Robot</title>
+<title>F / S WebRTC Robot with Canvas</title>
 <style>
   body {
     background: #121212;
@@ -57,11 +57,18 @@
     text-align: center;
     margin-bottom: 20px;
   }
+  #sonCanvas {
+    background: #000;
+    display: block;
+    margin: 20px auto 0;
+    border: 3px solid #3498db;
+    border-radius: 8px;
+  }
 </style>
 </head>
 <body>
 
-<h2>F / S WebRTC Robot Control</h2>
+<h2>F / S WebRTC Robot Control with Canvas</h2>
 
 <div id="roleSelect">
   <button onclick="setRole('F')">Father (F) - Controller</button>
@@ -106,6 +113,7 @@
 <!-- Son Logs & Stats -->
 <div id="sonPanel" class="hidden">
   <h3>S Robot Status</h3>
+  <canvas id="sonCanvas" width="300" height="300"></canvas>
   <div class="log" id="logS">Logs:</div>
   <div class="stats" id="statsS">
     <div>Battery: <span id="batteryLevel">100%</span></div>
@@ -148,6 +156,10 @@ function setRole(r) {
   }
 
   initPeer();
+
+  if(role === 'S') {
+    initCanvas();
+  }
 }
 
 function initPeer() {
@@ -182,6 +194,7 @@ function initPeer() {
         document.getElementById('sonPanel').classList.remove('hidden');
         logS("Connected to Father");
         startStats();
+        startMovementLoop();
       };
 
       dc.onmessage = e => {
@@ -218,8 +231,16 @@ function handleCmd(cmd) {
     case "DANCE":
       dc.send("Son is dancing 🤖🕺");
       break;
+    case "FWD":
+    case "BACK":
+    case "LEFT":
+    case "RIGHT":
+    case "STOP":
+      setMovement(cmd);
+      dc.send(`Moving: ${cmd}`);
+      break;
     default:
-      dc.send(`Executed command: ${cmd}`);
+      dc.send(`Unknown command: ${cmd}`);
   }
 }
 
@@ -248,6 +269,47 @@ function updateStats() {
   document.getElementById('uptime').textContent = uptime + "s";
 }
 
+// === Movement on Canvas ===
+let canvas, ctx;
+const squareSize = 30;
+let posX = 135; // centered in 300x300
+let posY = 135;
+let speed = 2;
+let currentMovement = "STOP";
+
+function initCanvas() {
+  canvas = document.getElementById("sonCanvas");
+  ctx = canvas.getContext("2d");
+  drawSquare();
+}
+
+function drawSquare() {
+  if(!ctx) return;
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = "#00ff00";
+  ctx.fillRect(posX, posY, squareSize, squareSize);
+}
+
+function setMovement(cmd) {
+  currentMovement = cmd;
+}
+
+// Moves the square every frame based on currentMovement command
+function startMovementLoop() {
+  function loop() {
+    switch(currentMovement) {
+      case "FWD": posY = Math.max(0, posY - speed); break;
+      case "BACK": posY = Math.min(canvas.height - squareSize, posY + speed); break;
+      case "LEFT": posX = Math.max(0, posX - speed); break;
+      case "RIGHT": posX = Math.min(canvas.width - squareSize, posX + speed); break;
+      case "STOP": /* do nothing */ break;
+    }
+    drawSquare();
+    requestAnimationFrame(loop);
+  }
+  loop();
+}
+
 // === WebRTC signaling functions ===
 
 async function createOffer() {
@@ -258,25 +320,25 @@ async function createOffer() {
 async function setAnswer() {
   try {
     const answerStr = document.getElementById('answerIn').value;
-    if (!answerStr) return alert("Paste answer SDP first.");
+    if(!answerStr) return alert("Paste the answer SDP!");
     const answer = JSON.parse(answerStr);
-    await pc.setRemoteDescription(answer);
+    await pc.setRemoteDescription(new RTCSessionDescription(answer));
+    logF("Answer set, connection hopefully established.");
   } catch (e) {
-    alert("Invalid answer SDP.");
+    alert("Invalid answer SDP: " + e);
   }
 }
 
 async function receiveOffer() {
   try {
     const offerStr = document.getElementById('offerIn').value;
-    if (!offerStr) return alert("Paste offer SDP first.");
+    if(!offerStr) return alert("Paste the offer SDP!");
     const offer = JSON.parse(offerStr);
-    await pc.setRemoteDescription(offer);
-
+    await pc.setRemoteDescription(new RTCSessionDescription(offer));
     const answer = await pc.createAnswer();
     await pc.setLocalDescription(answer);
   } catch (e) {
-    alert("Invalid offer SDP.");
+    alert("Error handling offer: " + e);
   }
 }
 </script>
